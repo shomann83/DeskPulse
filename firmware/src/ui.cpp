@@ -812,6 +812,21 @@ void ui_cycle_screen(void) {
     ui_show_screen(next);
 }
 
+void ui_auto_cycle_screen(void) {
+    // Timer-driven rotation. Excludes SCREEN_BLUETOOTH and includes the
+    // animated splash as one station. Manual cycling (ui_cycle_screen via the
+    // PWR button) still reaches Bluetooth.
+    screen_t next;
+    switch (current_screen) {
+    case SCREEN_SPLASH:       next = SCREEN_USAGE;        break;
+    case SCREEN_USAGE:        next = SCREEN_USAGE_CLAUDE; break;
+    case SCREEN_USAGE_CLAUDE: next = SCREEN_USAGE_CODEX;  break;
+    case SCREEN_USAGE_CODEX:  next = SCREEN_SPLASH;       break;
+    default:                  next = SCREEN_USAGE;        break;  // e.g. from Bluetooth
+    }
+    ui_show_screen(next);
+}
+
 void ui_toggle_splash(void) {
     if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
     else                                  ui_show_screen(SCREEN_SPLASH);

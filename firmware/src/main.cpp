@@ -307,6 +307,15 @@ void setup() {
         board_caps().name, W, H);
 }
 
+// ---- Auto-cycle: rotate screens on a timer ----
+// Rotation order (Bluetooth intentionally excluded; reach it via PWR):
+//   Splash(animation) -> Usage -> Claude -> Codex -> Splash ...
+// 0 disables. A manual PWR press resets the timer, so the screen you land on
+// stays for at least one full interval before auto-advancing resumes. Skipped
+// while the panel is asleep.
+#define AUTO_CYCLE_MS   (10UL * 1000UL)   // 10 s
+
+static uint32_t auto_cycle_last_ms = 0;
 static ble_state_t last_ble_state = BLE_STATE_INIT;
 
 void loop() {
@@ -365,8 +374,20 @@ void loop() {
             if (!idle_consume_wake_press()) {
                 if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
                 else                                          ui_cycle_screen();
+                auto_cycle_last_ms = millis();  // manual input pauses auto-cycle
             }
         }
+    }
+
+    // ---- Auto-cycle screens on a timer ----
+    if (AUTO_CYCLE_MS > 0 && !idle_is_asleep()) {
+        if (millis() - auto_cycle_last_ms >= AUTO_CYCLE_MS) {
+            ui_auto_cycle_screen();
+            auto_cycle_last_ms = millis();
+        }
+    } else {
+        // Keep the timer fresh while disabled/asleep so we don't jump on wake.
+        auto_cycle_last_ms = millis();
     }
 
     ble_state_t bs = ble_get_state();

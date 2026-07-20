@@ -500,7 +500,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     make_provider_usage_panel(usage_dual_container, &dual_widgets[USAGE_PROVIDER_CODEX],
                               USAGE_PROVIDER_CODEX,
                               L.content_y + L.usage_panel_h + L.usage_panel_gap,
-                              L.usage_panel_h, "Codex");
+                              L.usage_panel_h, "ChatGPT");
 
     lbl_anim = lv_label_create(usage_dual_container);
     lv_label_set_text(lbl_anim, "");
@@ -522,7 +522,7 @@ static void init_usage_screen(lv_obj_t* scr) {
                              &single_widgets[USAGE_PROVIDER_CLAUDE].weekly_reset);
     lv_obj_add_flag(usage_claude_container, LV_OBJ_FLAG_HIDDEN);
 
-    usage_codex_container = make_usage_root(scr, "Codex");
+    usage_codex_container = make_usage_root(scr, "ChatGPT");
     single_widgets[USAGE_PROVIDER_CODEX].root = usage_codex_container;
     make_single_metric_panel(usage_codex_container, L.content_y, "5h",
                              &single_widgets[USAGE_PROVIDER_CODEX].session_pct,

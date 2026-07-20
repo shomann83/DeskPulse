@@ -331,8 +331,13 @@ class CodexProvider:
 
         primary = rate_limit.get("primary_window")
         secondary = rate_limit.get("secondary_window")
-        if not isinstance(primary, dict) or not isinstance(secondary, dict):
+        if not isinstance(primary, dict):
             return Usage(0, 0, 0, 0, "codex_no_windows", False)
+        # Free plans expose only a single (primary) window; secondary_window is
+        # null. Paid plans expose both (primary = 5h session, secondary = 7d
+        # weekly). Tolerate a missing secondary so free-plan usage still shows;
+        # on Plus this path is unaffected and weekly fills in automatically.
+        has_secondary = isinstance(secondary, dict)
 
         allowed = rate_limit.get("allowed")
         limit_reached = rate_limit.get("limit_reached")
@@ -349,8 +354,8 @@ class CodexProvider:
         return Usage(
             session_pct=self._pct(primary.get("used_percent")),
             session_reset_min=self._reset_minutes(primary),
-            weekly_pct=self._pct(secondary.get("used_percent")),
-            weekly_reset_min=self._reset_minutes(secondary),
+            weekly_pct=self._pct(secondary.get("used_percent")) if has_secondary else 0,
+            weekly_reset_min=self._reset_minutes(secondary) if has_secondary else 0,
             status=status,
             ok=True,
         )

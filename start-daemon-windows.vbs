@@ -8,7 +8,9 @@ Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 q = Chr(34)
 
-daemonDir = "C:\Users\sebas\OneDrive - 3-t-s Data Solutions e.K\AI\Projects\3-t-s Data Solutions\Spielkram\externes Display\Code\DeskPulse\daemon"
+' Resolve the daemon dir relative to this script (repo root), so the file is
+' portable and carries no hard-coded user path.
+daemonDir = fso.GetParentFolderName(WScript.ScriptFullName) & "\daemon"
 py = daemonDir & "\.venv\Scripts\python.exe"
 
 logDir = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\DeskPulse"

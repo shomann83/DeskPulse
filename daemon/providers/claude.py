@@ -324,14 +324,40 @@ class ClaudeProvider:
             if refreshed is None:
                 return None
             return await self._poll_api(refreshed, retry_on_401=False)
+        # A 429 means the account is at its rate limit — exactly the state we
+        # most want on the display. Anthropic still returns the unified
+        # rate-limit headers on the 429, so report usage from them instead of
+        # dropping to a "claude_error" (which the firmware renders as 0% error).
+        if resp.status_code == 429:
+            usage = self._usage_from_headers(resp.headers, status_override="limited")
+            if usage is not None:
+                self._log("API HTTP 429 (rate limited); reporting usage from headers")
+                return usage
+            self._log(f"API HTTP 429 without rate-limit headers: {resp.text[:200]}")
+            return None
         if resp.status_code >= 400:
             self._log(f"API HTTP {resp.status_code}: {resp.text[:200]}")
             return None
 
-        def hdr(name: str, default: str = "0") -> str:
-            return resp.headers.get(name, default)
+        usage = self._usage_from_headers(resp.headers)
+        if usage is None:
+            self._log("API OK but rate-limit headers were missing")
+            return None
+        return usage
+
+    @staticmethod
+    def _usage_from_headers(headers, *, status_override: str | None = None) -> Usage | None:
+        """Build Usage from the anthropic-ratelimit-unified-* response headers.
+
+        These headers are present on both 200 and 429 responses. Returns None
+        when they are absent (a genuine error rather than a rate-limit hit)."""
+        if "anthropic-ratelimit-unified-5h-utilization" not in headers:
+            return None
 
         now = time.time()
+
+        def hdr(name: str, default: str = "0") -> str:
+            return headers.get(name, default)
 
         def reset_minutes(reset_ts: str) -> int:
             try:
@@ -352,6 +378,6 @@ class ClaudeProvider:
             session_reset_min=reset_minutes(hdr("anthropic-ratelimit-unified-5h-reset")),
             weekly_pct=pct(hdr("anthropic-ratelimit-unified-7d-utilization")),
             weekly_reset_min=reset_minutes(hdr("anthropic-ratelimit-unified-7d-reset")),
-            status=hdr("anthropic-ratelimit-unified-5h-status", "unknown"),
+            status=status_override or hdr("anthropic-ratelimit-unified-5h-status", "unknown"),
             ok=True,
         )

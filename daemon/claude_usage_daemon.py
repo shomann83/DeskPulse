@@ -73,14 +73,23 @@ async def scan_for_device() -> str | None:
 
 
 def usage_to_payload(usage: Usage) -> dict:
-    return {
+    payload = {
         "s": usage.session_pct,
         "sr": usage.session_reset_min,
         "w": usage.weekly_pct,
         "wr": usage.weekly_reset_min,
         "st": usage.status,
         "ok": usage.ok,
+        # Window lengths in seconds; 0 tells the firmware the provider has no
+        # such window, which is different from "window exists and sits at 0%".
+        "sw": usage.session_window_s,
+        "ww": usage.weekly_window_s,
     }
+    if usage.credits_valid:
+        payload["ch"] = usage.credits_has
+        payload["cb"] = usage.credits_balance
+        payload["cm"] = usage.credits_msgs
+    return payload
 
 
 def failed_usage(status: str) -> Usage:
@@ -94,9 +103,11 @@ def single_provider_payload(provider: Provider, usage: Usage) -> dict:
 
 
 def dual_provider_payload(usages: dict[str, Usage]) -> dict:
-    claude_usage = usages.get("claude", failed_usage("claude_missing"))
-    payload = usage_to_payload(claude_usage)
-    payload["p"] = "both"
+    # Dual payloads carry no top-level mirror of the Claude fields. The firmware
+    # only falls back to those when both "c" and "x" fail to parse, so they were
+    # dead weight — and BLE writes go out without response, capped by the
+    # negotiated MTU (NimBLE defaults to 255, i.e. 252 usable bytes).
+    payload: dict = {"p": "both"}
     for name, key in DUAL_PROVIDER_KEYS.items():
         payload[key] = usage_to_payload(usages.get(name, failed_usage(f"{name}_missing")))
     return payload
@@ -197,6 +208,15 @@ class Session:
     async def write_payload(self, payload: dict) -> bool:
         data = json.dumps(payload, separators=(",", ":")).encode()
         log(f"Sending: {data.decode()}")
+        # A write-without-response longer than the MTU allows is dropped or cut
+        # silently, which would show up as stale or malformed numbers on the
+        # device rather than as an error. Say so instead.
+        try:
+            limit = self.client.mtu_size - 3
+        except (BleakError, NotImplementedError, AttributeError):
+            limit = 0
+        if limit and len(data) > limit:
+            log(f"Payload {len(data)}B exceeds the {limit}B ATT write limit")
         try:
             await self.client.write_gatt_char(RX_CHAR_UUID, data, response=False)
             return True

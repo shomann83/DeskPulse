@@ -26,6 +26,14 @@ USAGE_URLS = (
     "https://chatgpt.com/backend-api/codex/usage",
 )
 
+# Windows are classified by their advertised length, not by their position in
+# the response. OpenAI removed the 5h session window in July 2026: primary_window
+# now carries the weekly limit and secondary_window is null. Sorting by length
+# survives that reshuffle and any future one.
+SESSION_WINDOW_MAX_S = 86400  # anything up to a day counts as a session window
+KNOWN_WINDOW_SECONDS = (5 * 3600, 7 * 86400)
+WINDOW_TOLERANCE = 0.1  # ±10% around a known length still counts as familiar
+
 
 @dataclass
 class _AuthPayload:
@@ -333,11 +341,10 @@ class CodexProvider:
         secondary = rate_limit.get("secondary_window")
         if not isinstance(primary, dict):
             return Usage(0, 0, 0, 0, "codex_no_windows", False)
-        # Free plans expose only a single (primary) window; secondary_window is
-        # null. Paid plans expose both (primary = 5h session, secondary = 7d
-        # weekly). Tolerate a missing secondary so free-plan usage still shows;
-        # on Plus this path is unaffected and weekly fills in automatically.
-        has_secondary = isinstance(secondary, dict)
+
+        session, session_s, weekly, weekly_s = self._classify_windows(
+            primary, secondary, payload.get("additional_rate_limits")
+        )
 
         allowed = rate_limit.get("allowed")
         limit_reached = rate_limit.get("limit_reached")
@@ -351,14 +358,125 @@ class CodexProvider:
         else:
             status = "unknown"
 
+        credits = self._credits_from_payload(payload.get("credits"))
+
         return Usage(
-            session_pct=self._pct(primary.get("used_percent")),
-            session_reset_min=self._reset_minutes(primary),
-            weekly_pct=self._pct(secondary.get("used_percent")) if has_secondary else 0,
-            weekly_reset_min=self._reset_minutes(secondary) if has_secondary else 0,
+            session_pct=self._pct(session.get("used_percent")) if session else 0,
+            session_reset_min=self._reset_minutes(session) if session else 0,
+            weekly_pct=self._pct(weekly.get("used_percent")) if weekly else 0,
+            weekly_reset_min=self._reset_minutes(weekly) if weekly else 0,
             status=status,
             ok=True,
+            session_window_s=session_s,
+            weekly_window_s=weekly_s,
+            **credits,
         )
+
+    def _classify_windows(
+        self,
+        primary: dict[str, Any],
+        secondary: object,
+        additional: object,
+    ) -> tuple[dict[str, Any] | None, int, dict[str, Any] | None, int]:
+        """Sort the reported rate-limit windows into a session and a weekly slot.
+
+        Assignment is driven by ``limit_window_seconds`` rather than by the key a
+        window arrived under, so the pairing survives OpenAI reshuffling the
+        response. Returns ``(session, session_seconds, weekly, weekly_seconds)``;
+        a slot the plan does not expose comes back as ``(None, 0)``.
+        """
+        candidates = [primary]
+        if isinstance(secondary, dict):
+            candidates.append(secondary)
+        candidates.extend(self._additional_windows(additional))
+
+        measured = [(self._window_seconds(w), w) for w in candidates]
+        measured = [(secs, w) for secs, w in measured if secs > 0]
+        if not measured:
+            # No window advertises its length — fall back to the historical
+            # positional reading rather than showing nothing at all, and assume
+            # the lengths that pairing has always implied.
+            self._log("Codex windows lack limit_window_seconds; assuming primary=session")
+            has_secondary = isinstance(secondary, dict)
+            return (
+                primary,
+                KNOWN_WINDOW_SECONDS[0],
+                secondary if has_secondary else None,
+                KNOWN_WINDOW_SECONDS[1] if has_secondary else 0,
+            )
+
+        for secs, _ in measured:
+            if not any(
+                abs(secs - known) <= known * WINDOW_TOLERANCE
+                for known in KNOWN_WINDOW_SECONDS
+            ):
+                self._log(f"Codex reported an unfamiliar {secs}s rate-limit window")
+
+        short = [(secs, w) for secs, w in measured if secs <= SESSION_WINDOW_MAX_S]
+        long = [(secs, w) for secs, w in measured if secs > SESSION_WINDOW_MAX_S]
+        session_s, session = min(short, key=lambda item: item[0]) if short else (0, None)
+        weekly_s, weekly = max(long, key=lambda item: item[0]) if long else (0, None)
+        return session, session_s, weekly, weekly_s
+
+    @staticmethod
+    def _additional_windows(additional: object) -> list[dict[str, Any]]:
+        """Pull window dicts out of ``additional_rate_limits`` (usually null).
+
+        The field is undocumented, so accept both a flat list of windows and a
+        list of rate-limit objects that nest primary/secondary windows.
+        """
+        if not isinstance(additional, list):
+            return []
+        found: list[dict[str, Any]] = []
+        for entry in additional:
+            if not isinstance(entry, dict):
+                continue
+            if "limit_window_seconds" in entry:
+                found.append(entry)
+                continue
+            for key in ("primary_window", "secondary_window"):
+                nested = entry.get(key)
+                if isinstance(nested, dict):
+                    found.append(nested)
+        return found
+
+    @staticmethod
+    def _window_seconds(window: dict[str, Any]) -> int:
+        try:
+            return max(0, int(window.get("limit_window_seconds")))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _credits_from_payload(credits: object) -> dict[str, Any]:
+        """Flatten the prepaid-credit block into Usage kwargs.
+
+        The device shows this in the slot the 5h window used to occupy, so an
+        absent or unparseable block must stay invalid rather than read as zero.
+        """
+        if not isinstance(credits, dict):
+            return {}
+        if credits.get("unlimited") is True:
+            balance = "unlim."
+        else:
+            raw = credits.get("balance")
+            balance = raw if isinstance(raw, str) else ""
+            if not balance and isinstance(raw, (int, float)):
+                balance = str(raw)
+        msgs = 0
+        approx = credits.get("approx_local_messages")
+        if isinstance(approx, list):
+            for value in approx:
+                try:
+                    msgs = max(msgs, int(value))
+                except (TypeError, ValueError):
+                    continue
+        return {
+            "credits_valid": True,
+            "credits_has": credits.get("has_credits") is True,
+            "credits_balance": balance[:11],
+            "credits_msgs": msgs,
+        }
 
     @staticmethod
     def _pct(value: object) -> int:

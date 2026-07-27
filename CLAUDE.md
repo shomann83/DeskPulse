@@ -129,6 +129,25 @@ See `~/.claude/projects/.../memory/` files for persistent context (user is an em
 - All UI margins widened to 20px to clear the rounded display corners.
 - Battery icons converted to RGB565A8 alpha so they blend cleanly over the splash animations.
 
+## Rate-limit windows (read before touching provider code)
+
+Windows are classified by **length**, never by position. `providers/codex.py::_classify_windows()`
+collects every window from `primary_window`, `secondary_window` and
+`additional_rate_limits`, then assigns the shortest ≤ 24 h to the session slot and
+the longest > 24 h to the weekly slot. A slot with no matching window reports
+`session_window_s`/`weekly_window_s` of **0**, which the firmware reads as "window
+absent" rather than "0% used".
+
+This exists because the positional mapping broke silently: OpenAI dropped the 5h
+window in July 2026, `primary_window` started carrying the weekly limit, and the
+device showed a weekly percentage under a "5h" label with a 166 h reset for weeks
+without a single log line. `daemon/tests/test_codex_windows.py` pins the behaviour.
+
+UI consequence: `ui.cpp::update_metric_slots()` gives the spare slot to the short
+window when one exists and to the credit balance when it doesn't — so if OpenAI
+reinstates a 5h window, it reclaims the slot and credits disappear automatically.
+Slot captions come from `format_window_name()`, derived from the window length.
+
 ## Daemon / host side
 
 Bash daemon (`daemon/claude-usage-daemon.sh`) reads OAuth token, polls Anthropic API, sends JSON over BLE GATT. Run with `systemctl --user start claude-usage-daemon`. The unit file's `ExecStart` is the absolute path to the script — repoint it when switching between the worktree and the main checkout.

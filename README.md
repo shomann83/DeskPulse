@@ -17,9 +17,11 @@ license and third-party asset notes.
 
 - **Windows support** — a hidden background daemon plus a logon autostart task,
   so the device stays live without keeping a terminal open.
-- **ChatGPT / Codex free-plan handling** — free accounts expose only a single
-  usage window; the daemon no longer aborts when the weekly window is absent
-  and stays forward-compatible with paid plans.
+- **Length-based rate-limit windows** — usage windows are matched by their
+  advertised `limit_window_seconds` instead of the position they arrive in, so
+  a provider adding or dropping a window relabels the device instead of
+  mislabelling it. OpenAI removed the 5h window in July 2026; ChatGPT now
+  reports a weekly limit only, and the freed slot shows the credit balance.
 - **Screen auto-cycle** — screens rotate on a timer so the device is glanceable
   without touching it.
 - **Provider-accurate icons** — the ChatGPT screen uses the OpenAI mark and is
@@ -195,13 +197,25 @@ On any platform you can set it directly. Priority, highest first:
 3. Config file: `daemon/config.toml`
 4. Built-in fallback: `claude`
 
-In `both` mode a healthy daemon payload includes:
+In `both` mode a healthy daemon payload looks like this:
 
-```text
-"p":"both"
-"c":{...,"ok":true}
-"x":{...,"ok":true}
+```json
+{"p":"both",
+ "c":{"s":58,"sr":244,"w":19,"wr":7764,"st":"allowed","ok":true,"sw":18000,"ww":604800},
+ "x":{"s":0,"sr":0,"w":4,"wr":9923,"st":"allowed","ok":true,"sw":0,"ww":604800,
+      "ch":false,"cb":"0","cm":0}}
 ```
+
+Per provider: `s`/`sr` short window percentage and minutes to reset, `w`/`wr` the
+same for the weekly window, `st` status, `ok` parse success. `sw`/`ww` give each
+window's length in seconds — **`0` means the provider has no such window**, which
+is what tells the firmware to show credits instead of a phantom `0%`. ChatGPT
+additionally reports `ch` (has credits), `cb` (balance) and `cm` (approximate
+messages left).
+
+Payloads go out as BLE writes without response, so they must stay under the
+negotiated ATT limit (252 bytes at NimBLE's default MTU of 255). The daemon logs
+a warning if a payload would exceed it rather than letting it be cut silently.
 
 ## Screen controls
 

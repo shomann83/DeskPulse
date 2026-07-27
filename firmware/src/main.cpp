@@ -103,6 +103,12 @@ static void reset_provider_usage(ProviderUsageData* out) {
     strlcpy(out->status, "waiting", sizeof(out->status));
     out->ok = false;
     out->valid = false;
+    out->session_window_s = 0;
+    out->weekly_window_s = 0;
+    out->credits_valid = false;
+    out->credits_has = false;
+    out->credits_balance[0] = '\0';
+    out->credits_msgs = 0;
 }
 
 static void reset_usage(UsageData* out) {
@@ -129,6 +135,17 @@ static bool parse_provider_usage(JsonVariantConst src, ProviderUsageData* out) {
     strlcpy(out->status, src["st"] | "unknown", sizeof(out->status));
     out->ok = src["ok"] | false;
     out->valid = true;
+
+    // A daemon older than the window-length protocol sends neither key. Assume
+    // both windows exist there, otherwise every screen would lose its 5h column.
+    const bool has_window_info = !src["sw"].isNull() || !src["ww"].isNull();
+    out->session_window_s = has_window_info ? (src["sw"] | 0) : 5 * 3600;
+    out->weekly_window_s = has_window_info ? (src["ww"] | 0) : 7 * 86400;
+
+    out->credits_valid = !src["cb"].isNull();
+    out->credits_has = src["ch"] | false;
+    strlcpy(out->credits_balance, src["cb"] | "", sizeof(out->credits_balance));
+    out->credits_msgs = src["cm"] | 0;
     return true;
 }
 

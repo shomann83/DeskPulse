@@ -380,4 +380,6 @@ class ClaudeProvider:
             weekly_reset_min=reset_minutes(hdr("anthropic-ratelimit-unified-7d-reset")),
             status=status_override or hdr("anthropic-ratelimit-unified-5h-status", "unknown"),
             ok=True,
+            session_window_s=5 * 3600,
+            weekly_window_s=7 * 86400,
         )

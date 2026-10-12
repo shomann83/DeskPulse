@@ -448,6 +448,20 @@ class CodexProvider:
             return 0
 
     @staticmethod
+    def _format_balance(raw: object) -> str:
+        """Render the credit balance with two decimals.
+
+        The API sends the balance unrounded (e.g. "12.345678"); at the device's
+        48 px font that runs into the neighbouring column.
+        """
+        if isinstance(raw, bool) or raw is None:
+            return ""
+        try:
+            return f"{float(raw):.2f}"
+        except (TypeError, ValueError):
+            return raw if isinstance(raw, str) else ""
+
+    @staticmethod
     def _credits_from_payload(credits: object) -> dict[str, Any]:
         """Flatten the prepaid-credit block into Usage kwargs.
 
@@ -459,10 +473,7 @@ class CodexProvider:
         if credits.get("unlimited") is True:
             balance = "unlim."
         else:
-            raw = credits.get("balance")
-            balance = raw if isinstance(raw, str) else ""
-            if not balance and isinstance(raw, (int, float)):
-                balance = str(raw)
+            balance = CodexProvider._format_balance(credits.get("balance"))
         msgs = 0
         approx = credits.get("approx_local_messages")
         if isinstance(approx, list):

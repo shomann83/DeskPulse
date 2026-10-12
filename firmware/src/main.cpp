@@ -242,12 +242,6 @@ static void handle_serial_cmd(const char* cmd) {
     } else if (strcmp(cmd, "usage") == 0 || strcmp(cmd, "screen usage") == 0) {
         ui_show_screen(SCREEN_USAGE);
         Serial.println("SCREEN_OK usage");
-    } else if (strcmp(cmd, "claude") == 0 || strcmp(cmd, "screen claude") == 0) {
-        ui_show_screen(SCREEN_USAGE_CLAUDE);
-        Serial.println("SCREEN_OK claude");
-    } else if (strcmp(cmd, "codex") == 0 || strcmp(cmd, "screen codex") == 0) {
-        ui_show_screen(SCREEN_USAGE_CODEX);
-        Serial.println("SCREEN_OK codex");
     } else if (strcmp(cmd, "splash") == 0 || strcmp(cmd, "screen splash") == 0) {
         ui_show_screen(SCREEN_SPLASH);
         Serial.println("SCREEN_OK splash");
@@ -317,28 +311,17 @@ void setup() {
 
     ui_init();
     ui_update_ble_status(ble_get_state(), ble_get_device_name(), ble_get_mac_address());
-    ui_update_battery(power_hal_battery_pct(), power_hal_is_charging());
-    ui_show_screen(SCREEN_SPLASH);
+    ui_show_screen(SCREEN_USAGE);
 
     Serial.printf("Dashboard ready (%s, %dx%d), waiting for data on BLE...\n",
         board_caps().name, W, H);
 }
 
-// ---- Auto-cycle: rotate screens on a timer ----
-// Rotation order (Bluetooth intentionally excluded; reach it via PWR):
-//   Splash(animation) -> Usage -> Claude -> Codex -> Splash ...
-// 0 disables. A manual PWR press resets the timer, so the screen you land on
-// stays for at least one full interval before auto-advancing resumes. Skipped
-// while the panel is asleep.
-#define AUTO_CYCLE_MS   (10UL * 1000UL)   // 10 s
-
-static uint32_t auto_cycle_last_ms = 0;
 static ble_state_t last_ble_state = BLE_STATE_INIT;
 
 void loop() {
     idle_tick();
     lv_timer_handler();
-    ui_tick_anim();
     ble_tick();
     power_hal_tick();
     imu_hal_tick();
@@ -351,7 +334,7 @@ void loop() {
     // ---- Physical buttons ----
     //   PRIMARY   → HID Space  (Claude Code voice-mode PTT)
     //   SECONDARY → HID Shift+Tab  (mode toggle; only if the board has one)
-    //   PWR       → cycle screens; on splash, cycle animations
+    //   PWR       → wake only (single-screen UI, nothing to cycle)
     // First press from sleep is consumed as a wake-only event by
     // idle_consume_wake_press(); the normal action fires from the second
     // press. Activity bookkeeping happens inside idle_consume_wake_press
@@ -388,39 +371,14 @@ void loop() {
         }
 
         if (power_hal_pwr_pressed()) {
-            if (!idle_consume_wake_press()) {
-                if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
-                else                                          ui_cycle_screen();
-                auto_cycle_last_ms = millis();  // manual input pauses auto-cycle
-            }
+            idle_consume_wake_press();
         }
-    }
-
-    // ---- Auto-cycle screens on a timer ----
-    if (AUTO_CYCLE_MS > 0 && !idle_is_asleep()) {
-        if (millis() - auto_cycle_last_ms >= AUTO_CYCLE_MS) {
-            ui_auto_cycle_screen();
-            auto_cycle_last_ms = millis();
-        }
-    } else {
-        // Keep the timer fresh while disabled/asleep so we don't jump on wake.
-        auto_cycle_last_ms = millis();
     }
 
     ble_state_t bs = ble_get_state();
     if (bs != last_ble_state) {
         last_ble_state = bs;
         ui_update_ble_status(bs, ble_get_device_name(), ble_get_mac_address());
-    }
-
-    static int  last_pct      = -2;
-    static bool last_charging = false;
-    int  pct      = power_hal_battery_pct();
-    bool charging = power_hal_is_charging();
-    if (pct != last_pct || charging != last_charging) {
-        last_pct = pct;
-        last_charging = charging;
-        ui_update_battery(pct, charging);
     }
 
     check_serial_cmd();

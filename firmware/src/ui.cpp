@@ -29,15 +29,19 @@ struct Layout {
     int16_t content_y;
     int16_t content_w;
 
-    // Usage screen
+    // Usage screen — no title row, the two provider panels fill the screen.
+    // The *_y values are offsets inside a panel's content area.
+    int16_t usage_top_y;
     int16_t usage_panel_h;
     int16_t usage_panel_gap;
     int16_t usage_icon_size;
-    int16_t usage_metric_y;
+    int16_t usage_label_y;   // caption: "5h", "Week", "Credits"
+    int16_t usage_value_y;   // big percentage / balance
     int16_t usage_bar_y;
-    int16_t usage_reset_y;
-    const lv_font_t* usage_title_font;
+    int16_t usage_bar_h;
+    int16_t usage_reset_y;   // reset countdown / message estimate
     const lv_font_t* usage_name_font;
+    const lv_font_t* usage_status_font;
     const lv_font_t* usage_pct_font;
     const lv_font_t* usage_label_font;
     const lv_font_t* usage_reset_font;
@@ -65,18 +69,21 @@ static void compute_layout(const BoardCaps& c) {
 
     if (c.height >= 460) {
         // Large layout — tuned for 480x480 (AMOLED-2.16).
-        L.content_y = 100;
-        L.usage_panel_h = 150;
+        L.content_y = 100;                // Bluetooth screen
+        L.usage_top_y = 20;
+        L.usage_panel_h = 212;            // (480 - 2*20 - 16) / 2
         L.usage_panel_gap = 16;
-        L.usage_icon_size = 36;
-        L.usage_metric_y = 48;
-        L.usage_bar_y = 104;
-        L.usage_reset_y = 124;
-        L.usage_title_font = &font_tiempos_56;
-        L.usage_name_font = &font_styrene_24;
+        L.usage_icon_size = 40;
+        L.usage_label_y = 54;
+        L.usage_value_y = 78;
+        L.usage_bar_y = 128;
+        L.usage_bar_h = 14;
+        L.usage_reset_y = 152;
+        L.usage_name_font = &font_styrene_28;
+        L.usage_status_font = &font_styrene_20;
         L.usage_pct_font = &font_styrene_48;
-        L.usage_label_font = &font_styrene_16;
-        L.usage_reset_font = &font_styrene_14;
+        L.usage_label_font = &font_styrene_24;
+        L.usage_reset_font = &font_styrene_24;
         L.bt_info_panel_h = 160;
         L.bt_reset_zone_h = 110;
         L.bt_title_font    = &font_tiempos_56;
@@ -86,18 +93,21 @@ static void compute_layout(const BoardCaps& c) {
         L.bt_credit_2_font = &font_styrene_20;
     } else {
         // Compact layout — tuned for 368x448 (AMOLED-1.8).
-        L.content_y = 85;
-        L.usage_panel_h = 130;
+        L.content_y = 85;                 // Bluetooth screen
+        L.usage_top_y = 20;
+        L.usage_panel_h = 198;            // (448 - 2*20 - 12) / 2
         L.usage_panel_gap = 12;
         L.usage_icon_size = 30;
-        L.usage_metric_y = 42;
-        L.usage_bar_y = 88;
-        L.usage_reset_y = 105;
-        L.usage_title_font = &font_tiempos_34;
-        L.usage_name_font = &font_styrene_20;
+        L.usage_label_y = 44;
+        L.usage_value_y = 66;
+        L.usage_bar_y = 102;
+        L.usage_bar_h = 12;
+        L.usage_reset_y = 122;
+        L.usage_name_font = &font_styrene_24;
+        L.usage_status_font = &font_styrene_16;
         L.usage_pct_font = &font_styrene_28;
-        L.usage_label_font = &font_styrene_14;
-        L.usage_reset_font = &font_styrene_12;
+        L.usage_label_font = &font_styrene_20;
+        L.usage_reset_font = &font_styrene_20;
         L.bt_info_panel_h = 140;
         L.bt_reset_zone_h = 90;
         L.bt_title_font    = &font_tiempos_34;
@@ -124,9 +134,6 @@ static void compute_layout(const BoardCaps& c) {
 
 // ---- Usage screen widgets ----
 static lv_obj_t* usage_dual_container;
-static lv_obj_t* usage_claude_container;
-static lv_obj_t* usage_codex_container;
-static lv_obj_t* lbl_anim;
 
 // One metric slot: a caption, a big value, an optional bar and a sub-line.
 // Which rate-limit window (or the credit balance) a slot shows is decided at
@@ -151,83 +158,20 @@ struct ProviderUsageWidgets {
 };
 static ProviderUsageWidgets dual_widgets[USAGE_PROVIDER_COUNT];
 
-struct SingleProviderUsageWidgets {
-    lv_obj_t* root;
-    MetricWidgets top;
-    MetricWidgets bottom;
-};
-static SingleProviderUsageWidgets single_widgets[USAGE_PROVIDER_COUNT];
-
 // ---- Bluetooth screen widgets ----
 static lv_obj_t* ble_container;
 static lv_obj_t* lbl_ble_status;
 static lv_obj_t* lbl_ble_device;
 static lv_obj_t* lbl_ble_mac;
 
-// ---- Battery indicator (shared, on top) ----
-static lv_obj_t* battery_img;
+// ---- Header icon (Bluetooth screen only) ----
 static lv_obj_t* header_icon_img;
-static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 
 // ---- Shared ----
 static lv_image_dsc_t logo_dsc;
 static lv_image_dsc_t codex_icon_dsc;
 static lv_image_dsc_t bluetooth_icon_dsc;
 static screen_t current_screen = SCREEN_USAGE;
-
-// Animation state
-static uint32_t anim_last_ms = 0;
-static uint8_t anim_spinner_idx = 0;
-static uint8_t anim_phase = 0;
-static uint8_t anim_msg_idx = 0;
-static uint32_t anim_msg_start = 0;
-#define ANIM_MSG_MS     4000
-
-static const char* const spinner_frames[] = {
-    "\xC2\xB7", "\xE2\x9C\xBB", "\xE2\x9C\xBD",
-    "\xE2\x9C\xB6", "\xE2\x9C\xB3", "\xE2\x9C\xA2",
-};
-#define SPINNER_COUNT 6
-#define SPINNER_PHASES (2 * (SPINNER_COUNT - 1))  // 10: ping-pong 0..5..0
-
-static const uint16_t spinner_ms[SPINNER_COUNT] = {
-    260, 130, 130, 130, 130, 260,
-};
-
-static const char* const anim_messages[] = {
-    "Accomplishing", "Elucidating", "Perusing",
-    "Actioning", "Enchanting", "Philosophising",
-    "Actualizing", "Envisioning", "Pondering",
-    "Baking", "Finagling", "Pontificating",
-    "Booping", "Flibbertigibbeting", "Processing",
-    "Brewing", "Forging", "Puttering",
-    "Calculating", "Forming", "Puzzling",
-    "Cerebrating", "Frolicking", "Reticulating",
-    "Channelling", "Generating", "Ruminating",
-    "Churning", "Germinating", "Scheming",
-    "Clauding", "Hatching", "Schlepping",
-    "Coalescing", "Herding", "Shimmying",
-    "Cogitating", "Honking", "Shucking",
-    "Combobulating", "Hustling", "Simmering",
-    "Computing", "Ideating", "Smooshing",
-    "Concocting", "Imagining", "Spelunking",
-    "Conjuring", "Incubating", "Spinning",
-    "Considering", "Inferring", "Stewing",
-    "Contemplating", "Jiving", "Sussing",
-    "Cooking", "Manifesting", "Synthesizing",
-    "Crafting", "Marinating", "Thinking",
-    "Creating", "Meandering", "Tinkering",
-    "Crunching", "Moseying", "Transmuting",
-    "Deciphering", "Mulling", "Unfurling",
-    "Deliberating", "Mustering", "Unravelling",
-    "Determining", "Musing", "Vibing",
-    "Discombobulating", "Noodling", "Wandering",
-    "Divining", "Percolating", "Whirring",
-    "Doing", "Wibbling",
-    "Effecting", "Wizarding",
-    "Working", "Wrangling",
-};
-#define ANIM_MSG_COUNT (sizeof(anim_messages) / sizeof(anim_messages[0]))
 
 static lv_color_t pct_color(float pct) {
     if (pct >= 80.0f) return COL_RED;
@@ -264,8 +208,6 @@ static void set_header_icon(const lv_image_dsc_t* dsc) {
 
 static const lv_image_dsc_t* header_icon_for_screen(screen_t screen) {
     switch (screen) {
-    case SCREEN_USAGE_CLAUDE: return &logo_dsc;
-    case SCREEN_USAGE_CODEX:  return &codex_icon_dsc;
     case SCREEN_BLUETOOTH:    return &bluetooth_icon_dsc;
     default:                  return nullptr;
     }
@@ -333,19 +275,10 @@ static void init_icon_dsc_rgb565a8(lv_image_dsc_t* dsc, int w, int h, const uint
     dsc->data_size = w * h * 3;
 }
 
-static void init_battery_icons(void) {
-    init_icon_dsc_rgb565a8(&battery_dscs[0], ICON_BATTERY_W, ICON_BATTERY_H, icon_battery_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[1], ICON_BATTERY_LOW_W, ICON_BATTERY_LOW_H, icon_battery_low_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[2], ICON_BATTERY_MEDIUM_W, ICON_BATTERY_MEDIUM_H, icon_battery_medium_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[3], ICON_BATTERY_FULL_W, ICON_BATTERY_FULL_H, icon_battery_full_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[4], ICON_BATTERY_CHARGING_W, ICON_BATTERY_CHARGING_H, icon_battery_charging_data);
-}
-
 static void init_image_descriptors(void) {
     init_icon_dsc_rgb565a8(&logo_dsc, LOGO_WIDTH, LOGO_HEIGHT, logo_data);
     init_icon_dsc_rgb565a8(&codex_icon_dsc, ICON_CODEX_W, ICON_CODEX_H, icon_codex_data);
     init_icon_dsc(&bluetooth_icon_dsc, ICON_BLUETOOTH_W, ICON_BLUETOOTH_H, icon_bluetooth_data);
-    init_battery_icons();
 }
 
 // ======== Usage Screen ========
@@ -354,21 +287,6 @@ static void style_metric_label(lv_obj_t* lbl, const char* text) {
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_font(lbl, L.usage_label_font, 0);
     lv_obj_set_style_text_color(lbl, COL_DIM, 0);
-}
-
-static lv_obj_t* make_pill(lv_obj_t* parent, const char* text) {
-    lv_obj_t* lbl = lv_label_create(parent);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_font(lbl, L.scr_h >= 460 ? &font_styrene_28 : L.usage_name_font, 0);
-    lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
-    lv_obj_set_style_bg_color(lbl, COL_BAR_BG, 0);
-    lv_obj_set_style_bg_opa(lbl, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(lbl, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_pad_left(lbl, 16, 0);
-    lv_obj_set_style_pad_right(lbl, 16, 0);
-    lv_obj_set_style_pad_top(lbl, 6, 0);
-    lv_obj_set_style_pad_bottom(lbl, 6, 0);
-    return lbl;
 }
 
 static void make_provider_mark(lv_obj_t* panel, ProviderUsageWidgets* widgets,
@@ -394,15 +312,15 @@ static void make_dual_metric_column(lv_obj_t* panel, MetricWidgets* out,
                                     int x, int col_w) {
     out->label = lv_label_create(panel);
     style_metric_label(out->label, "--");
-    lv_obj_set_pos(out->label, x, L.usage_metric_y);
+    lv_obj_set_pos(out->label, x, L.usage_label_y);
 
     out->value = lv_label_create(panel);
     lv_label_set_text(out->value, "--%");
     lv_obj_set_style_text_font(out->value, L.usage_pct_font, 0);
     lv_obj_set_style_text_color(out->value, COL_TEXT, 0);
-    lv_obj_set_pos(out->value, x, L.usage_metric_y + 14);
+    lv_obj_set_pos(out->value, x, L.usage_value_y);
 
-    out->bar = make_bar(panel, x, L.usage_bar_y, col_w, 12);
+    out->bar = make_bar(panel, x, L.usage_bar_y, col_w, L.usage_bar_h);
 
     out->sub = lv_label_create(panel);
     lv_label_set_text(out->sub, "--");
@@ -427,13 +345,15 @@ static void make_provider_usage_panel(lv_obj_t* parent, ProviderUsageWidgets* wi
     lv_label_set_text(widgets->name, name);
     lv_obj_set_style_text_font(widgets->name, L.usage_name_font, 0);
     lv_obj_set_style_text_color(widgets->name, COL_TEXT, 0);
-    lv_obj_set_pos(widgets->name, L.usage_icon_size + 10, 3);
+    lv_obj_set_pos(widgets->name, L.usage_icon_size + 12,
+                   (L.usage_icon_size - lv_font_get_line_height(L.usage_name_font)) / 2);
 
     widgets->status = lv_label_create(widgets->panel);
     lv_label_set_text(widgets->status, "waiting");
-    lv_obj_set_style_text_font(widgets->status, L.usage_reset_font, 0);
+    lv_obj_set_style_text_font(widgets->status, L.usage_status_font, 0);
     lv_obj_set_style_text_color(widgets->status, COL_DIM, 0);
-    lv_obj_align(widgets->status, LV_ALIGN_TOP_RIGHT, 0, 8);
+    lv_obj_align(widgets->status, LV_ALIGN_TOP_RIGHT, 0,
+                 (L.usage_icon_size - lv_font_get_line_height(L.usage_status_font)) / 2);
 
     const int gap = 14;
     const int col_w = (inner_w - gap) / 2;
@@ -443,37 +363,7 @@ static void make_provider_usage_panel(lv_obj_t* parent, ProviderUsageWidgets* wi
     make_dual_metric_column(widgets->panel, &widgets->right, col2, col_w);
 }
 
-static void make_single_metric_panel(lv_obj_t* parent, int y, MetricWidgets* out) {
-    lv_obj_t* panel = make_panel(parent, L.margin, y, L.content_w, L.usage_panel_h);
-    const int inner_w = L.content_w - 32;
-    const bool large = L.scr_h >= 460;
-    const int bar_y = large ? 56 : 50;
-    const int bar_h = large ? 24 : 18;
-    const int reset_y = large ? 94 : 84;
-
-    out->value = lv_label_create(panel);
-    lv_label_set_text(out->value, "--%");
-    lv_obj_set_style_text_font(out->value, L.usage_pct_font, 0);
-    lv_obj_set_style_text_color(out->value, COL_TEXT, 0);
-    lv_obj_set_pos(out->value, 0, 0);
-
-    out->label = make_pill(panel, "--");
-    lv_obj_align(out->label, LV_ALIGN_TOP_RIGHT, 0, 1);
-
-    out->bar = make_bar(panel, 0, bar_y, inner_w, bar_h);
-
-    out->sub = lv_label_create(panel);
-    lv_label_set_text(out->sub, "--");
-    lv_obj_set_style_text_font(out->sub, L.scr_h >= 460 ? &font_styrene_28 : L.usage_name_font, 0);
-    lv_obj_set_style_text_color(out->sub, COL_DIM, 0);
-    lv_obj_set_pos(out->sub, 0, reset_y);
-
-    out->bar_y = bar_y;
-    out->sub_y = reset_y;
-    out->sub_x = 0;
-}
-
-static lv_obj_t* make_usage_root(lv_obj_t* scr, const char* title) {
+static lv_obj_t* make_usage_root(lv_obj_t* scr) {
     lv_obj_t* root = lv_obj_create(scr);
     lv_obj_set_size(root, L.scr_w, L.scr_h);
     lv_obj_set_pos(root, 0, 0);
@@ -482,50 +372,21 @@ static lv_obj_t* make_usage_root(lv_obj_t* scr, const char* title) {
     lv_obj_set_style_pad_all(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(root, global_click_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t* lbl_title = lv_label_create(root);
-    lv_label_set_text(lbl_title, title);
-    lv_obj_set_style_text_font(lbl_title, L.usage_title_font, 0);
-    lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
-    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, L.title_y);
     return root;
 }
 
+// Single screen: Claude on top, ChatGPT below, filling the whole panel. No
+// title, battery, animation line or per-provider detail screens — the device
+// runs on USB power and stays on this view.
 static void init_usage_screen(lv_obj_t* scr) {
-    usage_dual_container = make_usage_root(scr, "Usage");
+    usage_dual_container = make_usage_root(scr);
     make_provider_usage_panel(usage_dual_container, &dual_widgets[USAGE_PROVIDER_CLAUDE],
-                              USAGE_PROVIDER_CLAUDE, L.content_y,
+                              USAGE_PROVIDER_CLAUDE, L.usage_top_y,
                               L.usage_panel_h, "Claude");
     make_provider_usage_panel(usage_dual_container, &dual_widgets[USAGE_PROVIDER_CODEX],
                               USAGE_PROVIDER_CODEX,
-                              L.content_y + L.usage_panel_h + L.usage_panel_gap,
+                              L.usage_top_y + L.usage_panel_h + L.usage_panel_gap,
                               L.usage_panel_h, "ChatGPT");
-
-    lbl_anim = lv_label_create(usage_dual_container);
-    lv_label_set_text(lbl_anim, "");
-    lv_obj_set_style_text_font(lbl_anim, &font_mono_32, 0);
-    lv_obj_set_style_text_color(lbl_anim, COL_ACCENT, 0);
-    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -15);
-
-    // Both single-provider screens are built the same way; which window (or the
-    // credit balance) lands in the top and bottom panel is decided per update.
-    const int bottom_y = L.content_y + L.usage_panel_h + L.usage_panel_gap;
-
-    usage_claude_container = make_usage_root(scr, "Claude");
-    single_widgets[USAGE_PROVIDER_CLAUDE].root = usage_claude_container;
-    make_single_metric_panel(usage_claude_container, L.content_y,
-                             &single_widgets[USAGE_PROVIDER_CLAUDE].top);
-    make_single_metric_panel(usage_claude_container, bottom_y,
-                             &single_widgets[USAGE_PROVIDER_CLAUDE].bottom);
-    lv_obj_add_flag(usage_claude_container, LV_OBJ_FLAG_HIDDEN);
-
-    usage_codex_container = make_usage_root(scr, "ChatGPT");
-    single_widgets[USAGE_PROVIDER_CODEX].root = usage_codex_container;
-    make_single_metric_panel(usage_codex_container, L.content_y,
-                             &single_widgets[USAGE_PROVIDER_CODEX].top);
-    make_single_metric_panel(usage_codex_container, bottom_y,
-                             &single_widgets[USAGE_PROVIDER_CODEX].bottom);
-    lv_obj_add_flag(usage_codex_container, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ======== Bluetooth Screen ========
@@ -628,10 +489,6 @@ void ui_init(void) {
     header_icon_img = lv_image_create(scr);
     lv_image_set_src(header_icon_img, &logo_dsc);
     lv_obj_set_pos(header_icon_img, L.margin, L.title_y - 10);
-
-    battery_img = lv_image_create(scr);
-    lv_image_set_src(battery_img, &battery_dscs[0]);
-    lv_obj_set_pos(battery_img, L.scr_w - 48 - L.margin, L.title_y);
 }
 
 static void set_usage_bar(lv_obj_t* bar, int pct, lv_color_t color) {
@@ -682,7 +539,14 @@ static void set_metric_window(MetricWidgets* m, int window_s, float pct,
 // Prepaid credits have no ceiling, so this slot shows a balance and no bar.
 static void set_metric_credits(MetricWidgets* m, const ProviderUsageData* usage) {
     lv_label_set_text(m->label, "Credits");
-    lv_label_set_text(m->value, usage->credits_balance[0] ? usage->credits_balance : "0");
+    // The daemon already rounds to two decimals; cut here too so an older
+    // daemon can't push a long balance into the neighbouring column.
+    char balance[sizeof(usage->credits_balance)];
+    snprintf(balance, sizeof(balance), "%s",
+             usage->credits_balance[0] ? usage->credits_balance : "0");
+    char* dot = strchr(balance, '.');
+    if (dot && strlen(dot) > 3) dot[3] = '\0';
+    lv_label_set_text(m->value, balance);
     show_metric_bar(m, false);
     if (usage->credits_has) lv_label_set_text_fmt(m->sub, "~%d msg", usage->credits_msgs);
     else                    lv_label_set_text(m->sub, "none");
@@ -706,78 +570,34 @@ static void update_metric_slots(MetricWidgets* spare, MetricWidgets* weekly,
 }
 
 static void update_provider_usage_widgets(ProviderUsageWidgets* dual,
-                                          SingleProviderUsageWidgets* single,
                                           const ProviderUsageData* usage) {
     if (!usage->valid) {
         lv_label_set_text(dual->status, "waiting");
         lv_obj_set_style_text_color(dual->status, COL_DIM, 0);
         clear_metric(&dual->left);
         clear_metric(&dual->right);
-        if (single->root) {
-            clear_metric(&single->top);
-            clear_metric(&single->bottom);
-        }
         return;
     }
 
-    // Overview: the spare slot keeps the left column so both providers line up.
+    // The spare slot keeps the left column so both providers line up.
     update_metric_slots(&dual->left, &dual->right, usage);
     lv_label_set_text(dual->status, usage->ok ? usage->status : "error");
     lv_obj_set_style_text_color(dual->status, usage->ok ? COL_GREEN : COL_RED, 0);
-
-    if (!single->root) return;
-    // Full-screen view: the rate limit belongs on top, so credits drop to the
-    // bottom panel while the short window would have claimed the top one.
-    const bool has_session = usage->session_window_s > 0;
-    update_metric_slots(has_session ? &single->top : &single->bottom,
-                        has_session ? &single->bottom : &single->top,
-                        usage);
 }
 
 void ui_update(const UsageData* data) {
     if (!data->valid) return;
 
     for (int i = 0; i < USAGE_PROVIDER_COUNT; i++) {
-        update_provider_usage_widgets(&dual_widgets[i], &single_widgets[i],
-                                      &data->providers[i]);
+        update_provider_usage_widgets(&dual_widgets[i], &data->providers[i]);
     }
 }
 
-void ui_tick_anim(void) {
-    if (current_screen != SCREEN_USAGE) return;
-
-    uint32_t now = lv_tick_get();
-
-    if (now - anim_msg_start >= ANIM_MSG_MS) {
-        anim_msg_idx = (anim_msg_idx + 1) % ANIM_MSG_COUNT;
-        anim_msg_start = now;
-    }
-
-    if (now - anim_last_ms >= spinner_ms[anim_spinner_idx]) {
-        anim_last_ms = now;
-        anim_phase = (anim_phase + 1) % SPINNER_PHASES;
-        anim_spinner_idx = (anim_phase < SPINNER_COUNT) ? anim_phase
-                                                        : (SPINNER_PHASES - anim_phase);
-
-        static char buf[80];
-        snprintf(buf, sizeof(buf), "%s %s\xE2\x80\xA6",
-                 spinner_frames[anim_spinner_idx],
-                 anim_messages[anim_msg_idx]);
-        lv_label_set_text(lbl_anim, buf);
-    }
-}
-
-static screen_t prev_non_splash_screen = SCREEN_USAGE;
-static void apply_battery_visibility(void) {
-    if (!battery_img) return;
-    if (current_screen == SCREEN_SPLASH) lv_obj_add_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
-    else                                  lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
-}
-
+// Usage is the only regular screen. Splash and Bluetooth are only reachable
+// via serial commands; a tap there returns to Usage, a tap on Usage does nothing.
 static void global_click_cb(lv_event_t* e) {
     (void)e;
-    if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
-    else                                  ui_show_screen(SCREEN_SPLASH);
+    if (current_screen != SCREEN_USAGE) ui_show_screen(SCREEN_USAGE);
 }
 
 static void ble_reset_click_cb(lv_event_t* e) {
@@ -787,8 +607,6 @@ static void ble_reset_click_cb(lv_event_t* e) {
 
 static void hide_screen_roots(void) {
     lv_obj_add_flag(usage_dual_container, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(usage_claude_container, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(usage_codex_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(ble_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
 }
@@ -797,8 +615,6 @@ static void show_screen_root(screen_t screen) {
     switch (screen) {
     case SCREEN_SPLASH:       splash_show(); break;
     case SCREEN_USAGE:        lv_obj_clear_flag(usage_dual_container, LV_OBJ_FLAG_HIDDEN); break;
-    case SCREEN_USAGE_CLAUDE: lv_obj_clear_flag(usage_claude_container, LV_OBJ_FLAG_HIDDEN); break;
-    case SCREEN_USAGE_CODEX:  lv_obj_clear_flag(usage_codex_container, LV_OBJ_FLAG_HIDDEN); break;
     case SCREEN_BLUETOOTH:    lv_obj_clear_flag(ble_container, LV_OBJ_FLAG_HIDDEN); break;
     default: break;
     }
@@ -808,42 +624,7 @@ void ui_show_screen(screen_t screen) {
     hide_screen_roots();
     show_screen_root(screen);
     set_header_icon(header_icon_for_screen(screen));
-
-    if (screen != SCREEN_SPLASH) prev_non_splash_screen = screen;
     current_screen = screen;
-    apply_battery_visibility();
-}
-
-void ui_cycle_screen(void) {
-    screen_t next;
-    switch (current_screen) {
-    case SCREEN_USAGE:        next = SCREEN_USAGE_CLAUDE; break;
-    case SCREEN_USAGE_CLAUDE: next = SCREEN_USAGE_CODEX;  break;
-    case SCREEN_USAGE_CODEX:  next = SCREEN_BLUETOOTH;    break;
-    case SCREEN_BLUETOOTH:    next = SCREEN_USAGE;        break;
-    default:                  next = SCREEN_USAGE;        break;
-    }
-    ui_show_screen(next);
-}
-
-void ui_auto_cycle_screen(void) {
-    // Timer-driven rotation. Excludes SCREEN_BLUETOOTH and includes the
-    // animated splash as one station. Manual cycling (ui_cycle_screen via the
-    // PWR button) still reaches Bluetooth.
-    screen_t next;
-    switch (current_screen) {
-    case SCREEN_SPLASH:       next = SCREEN_USAGE;        break;
-    case SCREEN_USAGE:        next = SCREEN_USAGE_CLAUDE; break;
-    case SCREEN_USAGE_CLAUDE: next = SCREEN_USAGE_CODEX;  break;
-    case SCREEN_USAGE_CODEX:  next = SCREEN_SPLASH;       break;
-    default:                  next = SCREEN_USAGE;        break;  // e.g. from Bluetooth
-    }
-    ui_show_screen(next);
-}
-
-void ui_toggle_splash(void) {
-    if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
-    else                                  ui_show_screen(SCREEN_SPLASH);
 }
 
 screen_t ui_get_current_screen(void) {
@@ -880,23 +661,4 @@ void ui_update_ble_status(ble_state_t state, const char* name, const char* mac) 
         snprintf(mbuf, sizeof(mbuf), "Address: %s", mac);
         lv_label_set_text(lbl_ble_mac, mbuf);
     }
-}
-
-void ui_update_battery(int percent, bool charging) {
-    int idx;
-    if (charging) {
-        idx = 4;
-    } else if (percent < 0) {
-        idx = 0;
-    } else if (percent <= 10) {
-        idx = 0;
-    } else if (percent <= 35) {
-        idx = 1;
-    } else if (percent <= 75) {
-        idx = 2;
-    } else {
-        idx = 3;
-    }
-    lv_image_set_src(battery_img, &battery_dscs[idx]);
-    apply_battery_visibility();
 }

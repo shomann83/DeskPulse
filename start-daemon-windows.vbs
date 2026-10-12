@@ -1,6 +1,6 @@
 ' DeskPulse daemon launcher for Windows.
 ' Starts the BLE usage daemon hidden (no console window) and appends all
-' output to %LOCALAPPDATA%\DeskPulse\daemon.log. Registered as a logon task.
+' output to logs\daemon.log inside the repo (gitignored). Registered as a logon task.
 Option Explicit
 
 Dim sh, fso, q, daemonDir, py, logDir, logFile, cmd
@@ -13,7 +13,7 @@ q = Chr(34)
 daemonDir = fso.GetParentFolderName(WScript.ScriptFullName) & "\daemon"
 py = daemonDir & "\.venv\Scripts\python.exe"
 
-logDir = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\DeskPulse"
+logDir = fso.GetParentFolderName(WScript.ScriptFullName) & "\logs"
 If Not fso.FolderExists(logDir) Then fso.CreateFolder(logDir)
 logFile = logDir & "\daemon.log"
 

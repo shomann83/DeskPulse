@@ -91,7 +91,7 @@ Leave it running and the device starts updating. See
 ### 3. Autostart on logon
 
 `start-daemon-windows.vbs` launches the daemon hidden and appends output to
-`%LOCALAPPDATA%\DeskPulse\daemon.log`. Register it as a logon task:
+`logs\daemon.log` in the repository (gitignored). Register it as a logon task:
 
 1. Open **Task Scheduler** and create a task that runs at logon.
 2. Action: start a program → `wscript.exe`, argument: the full path to
@@ -99,6 +99,12 @@ Leave it running and the device starts updating. See
 
 The script resolves the daemon directory relative to its own location, so keep
 `start-daemon-windows.vbs` in the repository root.
+
+### Update in one step
+
+Double-click `flash-windows.bat`: it builds and flashes the firmware
+(`waveshare_amoled_216`), restarts the daemon and saves a device screenshot to
+`logs\screenshot.png` (via `tools\screenshot_windows.py`).
 
 ## macOS setup
 

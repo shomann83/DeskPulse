@@ -91,7 +91,7 @@ def test_weekly_only_live_payload(provider):
     # Credits fill the freed slot on the device.
     assert usage.credits_valid is True
     assert usage.credits_has is False
-    assert usage.credits_balance == "0"
+    assert usage.credits_balance == "0.00"
     assert usage.credits_msgs == 0
 
 
@@ -203,3 +203,19 @@ def test_unlimited_credits_render_short(provider):
     assert usage.credits_balance == "unlim."
     assert usage.credits_has is True
     assert usage.credits_msgs == 340
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("407.4704980", "407.47"),
+        ("12.345678", "12.35"),
+        ("7", "7.00"),
+        (3.14159, "3.14"),
+        (1234.5, "1234.50"),
+        ("n/a", "n/a"),
+        (None, ""),
+    ],
+)
+def test_credit_balance_rounded_to_two_decimals(raw, expected):
+    assert CodexProvider._format_balance(raw) == expected

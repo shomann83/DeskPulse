@@ -19,3 +19,6 @@ daemon/config.toml
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Daemon log (written by start-daemon-windows.vbs)
+logs/

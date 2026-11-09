@@ -100,6 +100,26 @@ Leave it running and the device starts updating. See
 The script resolves the daemon directory relative to its own location, so keep
 `start-daemon-windows.vbs` in the repository root.
 
+### 4. Long-lived Claude token (recommended)
+
+By default the daemon reads the Claude Code login from
+`%USERPROFILE%\.claude\.credentials.json` and refreshes it when it expires.
+That refresh can be rejected (HTTP 400) — the Claude panel then stays empty
+until you run `/login` again. A token from `claude setup-token` lasts about a
+year and needs no refresh:
+
+1. Double-click `set-claude-token-windows.bat`. It runs `claude setup-token`
+   (browser approval) and asks you to paste the token.
+2. The token is stored outside the repository in
+   `%USERPROFILE%\.config\claude-usage-monitor\claude-token` (current user only).
+3. The daemon picks it up on its next poll; `logs\daemon.log` shows
+   `Claude auth: long-lived token (...)`.
+
+Alternatively set the environment variable `DESKPULSE_CLAUDE_TOKEN`; it takes
+precedence over the file. If the API rejects the token, the daemon logs it and
+falls back to the Claude Code login. After about 330 days it logs a renewal
+reminder — run the `.bat` again.
+
 ### Update in one step
 
 Double-click `flash-windows.bat`: it builds and flashes the firmware

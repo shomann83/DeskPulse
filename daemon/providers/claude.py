@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import os
 import re
 import subprocess
 import sys
@@ -18,6 +19,15 @@ from . import Credentials, Usage
 
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+
+# Long-lived token from `claude setup-token` (valid about one year). Preferred
+# over the Claude Code login because it needs no OAuth refresh: the login's
+# refresh token kept getting rejected (HTTP 400) after the PC had been off for
+# a while, leaving the display blank until a manual /login. The env var wins
+# over the file; the file sits next to the daemon's cached BLE address.
+TOKEN_ENV_VAR = "DESKPULSE_CLAUDE_TOKEN"
+TOKEN_FILE_PATH = Path.home() / ".config" / "claude-usage-monitor" / "claude-token"
+TOKEN_RENEW_AFTER_DAYS = 330
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_HEADERS_TEMPLATE = {
@@ -58,8 +68,59 @@ class ClaudeProvider:
     def __init__(self, log: Callable[[str], None]) -> None:
         self._log = log
         self._auth_payload: _AuthPayload | None = None
+        # A long-lived token the API rejected; skipped until it is replaced.
+        self._rejected_static_token: str | None = None
+        self._auth_source: str | None = None
+        self._age_warned = False
 
     def read_credentials(self) -> Credentials | None:
+        static = self._read_static_token()
+        if static is not None and static.access_token != self._rejected_static_token:
+            where = TOKEN_ENV_VAR if static.storage == "static-env" else str(TOKEN_FILE_PATH)
+            self._note_auth_source(f"long-lived token ({where})")
+            return static
+        credentials = self._read_login_credentials()
+        if credentials is not None:
+            self._note_auth_source("Claude Code login")
+        return credentials
+
+    def _note_auth_source(self, source: str) -> None:
+        if source != self._auth_source:
+            self._log(f"Claude auth: {source}")
+            self._auth_source = source
+
+    def _read_static_token(self) -> Credentials | None:
+        token = os.environ.get(TOKEN_ENV_VAR, "").strip()
+        if token:
+            return Credentials(access_token=token, storage="static-env")
+        try:
+            raw = TOKEN_FILE_PATH.read_text(encoding="utf-8-sig")
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            self._log(f"Error reading Claude token file: {e}")
+            return None
+        token = raw.strip()
+        if not token:
+            return None
+        self._warn_if_token_old()
+        return Credentials(access_token=token, storage="static-file")
+
+    def _warn_if_token_old(self) -> None:
+        if self._age_warned:
+            return
+        try:
+            age_days = (time.time() - TOKEN_FILE_PATH.stat().st_mtime) / 86400
+        except OSError:
+            return
+        if age_days >= TOKEN_RENEW_AFTER_DAYS:
+            self._log(
+                f"Claude token file is {int(age_days)} days old; setup-token tokens "
+                "last about a year - renew with set-claude-token-windows.bat"
+            )
+            self._age_warned = True
+
+    def _read_login_credentials(self) -> Credentials | None:
         auth_payload = (
             self._read_auth_keychain()
             if sys.platform == "darwin"
@@ -71,6 +132,11 @@ class ClaudeProvider:
             return None
         credentials = self._extract_credentials(auth_payload)
         if credentials is None:
+            return None
+        if not credentials.access_token.strip():
+            # e.g. right after a logout or while `claude setup-token` runs: an
+            # empty token would otherwise go out as an illegal "Bearer " header.
+            self._log("Claude Code login has an empty access token")
             return None
         self._auth_payload = auth_payload
         return credentials
@@ -318,6 +384,18 @@ class ClaudeProvider:
         except httpx.HTTPError as e:
             self._log(f"API call failed: {e}")
             return None
+        if resp.status_code == 401 and credentials.storage in ("static-env", "static-file"):
+            # No refresh for long-lived tokens: park this one and fall back to
+            # the Claude Code login so the display keeps working meanwhile.
+            self._log(
+                "Long-lived Claude token rejected (HTTP 401); falling back to "
+                "Claude Code login - renew with set-claude-token-windows.bat"
+            )
+            self._rejected_static_token = credentials.access_token
+            fallback = self.read_credentials()
+            if fallback is None:
+                return None
+            return await self._poll_api(fallback, retry_on_401=retry_on_401)
         if resp.status_code == 401 and retry_on_401:
             self._log("API HTTP 401; attempting OAuth refresh")
             refreshed = await self._refresh_credentials(credentials)
